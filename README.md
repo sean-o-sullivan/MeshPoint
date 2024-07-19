@@ -25,4 +25,4 @@ This project demonstrates data sharing through a mesh network of ESP32 devices w
 
 ## Context
 
-I have a mobile app that takes the data from the access point's web page, store it, and display the readings for each device in real time.
+I have a mobile app that takes the data from the access point's web page, saves it, and displays the readings for each device in real time.
