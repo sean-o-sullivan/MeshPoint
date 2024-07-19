@@ -13,7 +13,7 @@
 1. Upload Code: Upload provided code to multiple ESP32 devices.
 2. Power Up: Power up devices to start communication.
 3. Connect to AP: Connect to AP using specified SSID and password.
-4. View Data: Open `192.168.4.1` in web browser to see live data.
+4. View Data: Open `192.168.4.1` in web browser to see live data (stored data clears every 100 messages).
 
 This project demonstrates data sharing through a mesh network of ESP32 devices with a web interface for monitoring.
 
@@ -22,3 +22,7 @@ This project demonstrates data sharing through a mesh network of ESP32 devices w
 1. Data encryption.
 2. Integrating true sensor data.
 3. Synchronised sleep for power saving.
+
+## Context
+
+I have a mobile app configured to take the data from the access point's web server, store it, and display the readings for each device in real time.
