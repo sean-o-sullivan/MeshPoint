@@ -16,3 +16,9 @@
 4. View Data: Open `192.168.4.1` in web browser to see live data.
 
 This project demonstrates data sharing through a mesh network of ESP32 devices with a web interface for monitoring.
+
+## Future Work
+
+1. Data encryption.
+2. Integrating true sensor data.
+3. Synchronised sleep for power saving.
