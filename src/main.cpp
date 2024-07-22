@@ -13,7 +13,7 @@
 #define MAX_PEERS 10 // Maximum number of peers to store
 #define AP_SSID "ESP32_AP"
 #define AP_PASSWORD "password"
-#define MAX_MESSAGES 100 // Maximum number of messages to store
+#define MAX_MESSAGES 2500 // Maximum number of messages to store
 #define CLEAR_INTERVAL 60000 // Clear messages every 60 seconds
 
 // Variables
@@ -23,7 +23,10 @@ static int seed = 0;
 static unsigned long last_send_time = 0;
 static unsigned long hi_send_time = 0;
 static unsigned long last_clear_time = 0;
-static float sensor_data[5] = {0};
+static float sensor_buffer[10] = {0};
+static int bufferCount = 0;
+static float sensor_data[500] = {0};
+static int arrayCount =0;
 static char mes[6] = {0};
 static uint8_t peer_macs[MAX_PEERS][6]; // Array to store MAC addresses of peers
 static int peer_count = 0; // Number of stored peers
@@ -325,14 +328,30 @@ void setup() {
 void loop() {
   int16_t x, y, z;
     // Update sensor data (dummy data for now)
-    for (int i = 0; i < 5; i++) {
+
         xl.readAxes(x, y, z);
         float a_x = xl.convertToG(100,x);
         float a_y = xl.convertToG(100,x);
         float a_z = xl.convertToG(100,x);
-
         float a_absolute = sqrt(a_x*a_x+a_y*a_y+a_z*a_z);
-        sensor_data[i] = a_absolute;
+
+        if(bufferCount<10){sensor_buffer[bufferCount] = a_absolute; bufferCount++;}
+        else
+        {
+            float maxInBuffer = 0;
+            for (int i; i<10; i++){
+                if(sensor_buffer[i]>maxInBuffer){
+                    maxInBuffer=sensor_buffer[i];
+                }
+            }
+            sensor_data[arrayCount] = maxInBuffer;
+            arrayCount++;
+            bufferCount=0;
+        }
+
+
+
+
 
 
         // int seed = random(0, 10); // Generating a seed between 0 and 10
@@ -341,7 +360,6 @@ void loop() {
         // } else {
         //     sensor_data[i] = SensorValue + random(seed * -1, seed);
         // }
-    }
 
     // Serial.print("X Acceleration (g):  ");
     // Serial.println(xl.convertToG(100,x));
