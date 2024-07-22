@@ -9,7 +9,6 @@ LIS331 xl;
 
 void setup() 
 {
-  // put your setup code here, to run once:
   pinMode(9,INPUT);       // Interrupt pin input
   Wire.begin(25, 26);
   xl.setI2CAddr(0x19);

@@ -5,6 +5,7 @@
 #include <Wire.h>
 #include <HardwareSerial.h>
 #include <Arduino.h>
+#include <cmath>
 
 // Constants
 #define WIFI_CHANNEL 1
@@ -36,9 +37,10 @@ int message_index = 0;
 // Web server running on port 80
 WebServer server(80);
 
-LIS331
+LIS331 xl;
 
 // Structure to hold the message data
+
 typedef struct __attribute__((packed)) esp_now_msg_t {
     uint8_t mac_addr[6];
     float sensor_data[5];
@@ -276,6 +278,12 @@ void handleRoot() {
 
 // Setup function
 void setup() {
+    pinMode(9,INPUT);       // Interrupt pin input
+    Wire.begin(25, 26);
+    
+    xl.setI2CAddr(0x19);
+    xl.begin(LIS331::USE_I2C);
+
     Serial.begin(115200);
 
     // Initialize Wi-Fi
@@ -315,16 +323,28 @@ void setup() {
 }
 
 void loop() {
+  int16_t x, y, z;
     // Update sensor data (dummy data for now)
     for (int i = 0; i < 5; i++) {
-        int seed = random(0, 10); // Generating a seed between 0 and 10
-        if (SensorValue > 0) {
-            sensor_data[i] = SensorValue + seed;
-        } else {
-            sensor_data[i] = SensorValue + random(seed * -1, seed);
-        }
+        xl.readAxes(x, y, z);
+        float a_x = xl.convertToG(100,x);
+        float a_y = xl.convertToG(100,x);
+        float a_z = xl.convertToG(100,x);
+
+        float a_absolute = sqrt(a_x*a_x+a_y*a_y+a_z*a_z);
+        sensor_data[i] = a_absolute;
+
+
+        // int seed = random(0, 10); // Generating a seed between 0 and 10
+        // if (SensorValue > 0) {
+        //     sensor_data[i] = SensorValue + seed;
+        // } else {
+        //     sensor_data[i] = SensorValue + random(seed * -1, seed);
+        // }
     }
 
+    // Serial.print("X Acceleration (g):  ");
+    // Serial.println(xl.convertToG(100,x));
     // Send sensor data every SEND_INTERVAL milliseconds
     if (millis() - last_send_time >= SEND_INTERVAL) {
         last_send_time = millis();
