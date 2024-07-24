@@ -1,167 +1,83 @@
 #include <WiFi.h>
 #include <esp_now.h>
-#include <AsyncTCP.h>
-#include <ESPAsyncWebServer.h>
+#include <stdlib.h>
 
-// Maximum number of peers
-#define MAX_PEERS 30
+// Define MAC address of the receiver (replace with the actual MAC address)
+uint8_t receiverMAC[] = {0x24, 0x6F, 0x28, 0xA1, 0xB2, 0xC3};
 
-const char* ssid = "ESP32_Network";
-const char* password = "password123";
-IPAddress local_IP(192, 168, 4, 1);
-IPAddress gateway(192, 168, 4, 1);
-IPAddress subnet(255, 255, 255, 0);
-
-// Structure to store received data
-typedef struct {
+// Structure to define the message
+typedef struct struct_message {
     uint8_t mac_addr[6];
-    uint8_t* data;
-    uint16_t length; // Add length to handle varying data sizes
-    bool sent;       // Flag to indicate if the data has been sent
-} BroadcastMessage;
+    uint8_t data[6000];
+} struct_message;
 
-// Array to store received messages
-BroadcastMessage receivedMessages[MAX_PEERS];
+// Create a struct_message to hold the data
+struct_message myData;
 
-// Index to keep track of stored messages
-int currentIndex = 0;
-
-// TCP server on port 80
-AsyncWebServer server(80);
-
-// Function to print MAC address to serial
-void printMacAddress(const uint8_t* mac_addr) {
-    for (int i = 0; i < 6; i++) {
-        if (mac_addr[i] < 16) {
-            Serial.print("0");
-        }
-        Serial.print(mac_addr[i], HEX);
-        if (i < 5) {
-            Serial.print(":");
-        }
-    }
-}
-
-// Callback when data is received
-void onDataRecv(const uint8_t* mac_addr, const uint8_t* incomingData, int len) {
-    Serial.print("Received message from: ");
-    printMacAddress(mac_addr);
-    Serial.println();
-
-    if (len != 6006) {  // 6 bytes MAC address + 6000 bytes data
-        Serial.println("Invalid message length");
-        return;
-    }
-
-    // Check if MAC address already exists
-    int index = -1;
-    for (int i = 0; i < currentIndex; i++) {
-        if (memcmp(receivedMessages[i].mac_addr, mac_addr, 6) == 0) {
-            index = i;
-            break;
-        }
-    }
-
-    if (index == -1) {
-        // New MAC address, store in the next available slot
-        if (currentIndex < MAX_PEERS) {
-            index = currentIndex++;
+// Function to generate uint8_t's
+void generateRandomData(uint8_t* data, size_t length) {
+    for (size_t i = 0; i < length; i++) {
+        float rand_val = (float)rand() / RAND_MAX;
+        if (rand_val < 0.99) {
+            data[i] = rand() % 4; // 0 to 3
         } else {
-            // If we've reached the max number of peers, override the oldest entry
-            index = 0;
-            currentIndex = 1;
-        }
-        receivedMessages[index].data = (uint8_t*)malloc(6000 * sizeof(uint8_t));
-    }
-
-    // Store the MAC address and data
-    memcpy(receivedMessages[index].mac_addr, mac_addr, 6);
-    memcpy(receivedMessages[index].data, incomingData + 6, 6000);
-    receivedMessages[index].length = 6000;
-    receivedMessages[index].sent = false;  // Mark as new data
-
-    // Print 6 sample integers (the n-thousandth of each array)
-    Serial.print("Data from ");
-    printMacAddress(mac_addr);
-    Serial.print(": ");
-    for (int i = 0; i < 6; i++) {
-        Serial.print(receivedMessages[index].data[i * 1000]);
-        if (i < 5) {
-            Serial.print(", ");
+            data[i] = 10 + rand() % 141; // 10 to 150
         }
     }
-    Serial.println();
 }
 
-// Initialize ESP-NOW
-void initESPNow() {
-    if (esp_now_init() != ESP_OK) {
-        Serial.println("Error initializing ESP-NOW");
-        return;
-    }
-    esp_now_register_recv_cb(onDataRecv);
-}
-
-// TCP request handler
-void onRequest(AsyncWebServerRequest* request) {
-    size_t totalSize = 0;
-    int validIndex = -1;
-    for (int i = 0; i < currentIndex; i++) {
-        if (!receivedMessages[i].sent) {
-            validIndex = i;
-            totalSize = 6 + 2 + receivedMessages[i].length;  // MAC address + length prefix + data
-            break;
-        }
-    }
-
-    if (validIndex == -1) {
-        request->send(200, "text/plain", "No new data available.");
-        return;
-    }
-
-    uint8_t* responseBuffer = (uint8_t*)malloc(totalSize);
-    uint8_t* ptr = responseBuffer;
-    memcpy(ptr, receivedMessages[validIndex].mac_addr, 6);
-    ptr += 6;
-    ptr[0] = (uint8_t)((receivedMessages[validIndex].length >> 8) & 0xFF); // High byte of length
-    ptr[1] = (uint8_t)(receivedMessages[validIndex].length & 0xFF);        // Low byte of length
-    ptr += 2;
-    memcpy(ptr, receivedMessages[validIndex].data, receivedMessages[validIndex].length);
-
-    // Create a response to send the binary data
-    AsyncWebServerResponse *response = request->beginResponse_P(200, "application/octet-stream", responseBuffer, totalSize);
-    response->addHeader("Content-Disposition", "attachment; filename=data.bin");
-    request->send(response);
-    free(responseBuffer);
-
-    // Mark the data as sent
-    receivedMessages[validIndex].sent = true;
+// Callback when data is sent
+void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+    Serial.print("Last Packet Send Status: ");
+    Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
 }
 
 void setup() {
     // Initialize Serial Monitor
     Serial.begin(115200);
 
-    // Configure static IP address
-    if (!WiFi.softAPConfig(local_IP, gateway, subnet)) {
-        Serial.println("AP Config Failed");
-    }
-
-    // Initialize Wi-Fi as Station and SoftAP
-    WiFi.softAP(ssid, password);
+    // Set device as a Wi-Fi Station
+    WiFi.mode(WIFI_STA);
 
     // Initialize ESP-NOW
-    initESPNow();
+    if (esp_now_init() != ESP_OK) {
+        Serial.println("Error initializing ESP-NOW");
+        return;
+    }
 
-    // Initialize TCP server
-    server.on("/", HTTP_GET, onRequest);
-    server.begin();
+    // Register the send callback
+    esp_now_register_send_cb(onDataSent);
 
-    Serial.println("ESP32 AP is running");
-    Serial.print("IP Address: ");
-    Serial.println(WiFi.softAPIP());
+    // Register peer
+    esp_now_peer_info_t peerInfo;
+    memcpy(peerInfo.peer_addr, receiverMAC, 6);
+    peerInfo.channel = 0;  
+    peerInfo.encrypt = false;
+
+    // Add peer
+    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+        Serial.println("Failed to add peer");
+        return;
+    }
+
+    // Set up the MAC address of this device
+    WiFi.macAddress(myData.mac_addr);
 }
 
 void loop() {
-    // Nothing to do here, all logic handled in callbacks and TCP server
+    // Generate random data
+    generateRandomData(myData.data, 6000);
+
+    // Send message via ESP-NOW
+    esp_err_t result = esp_now_send(receiverMAC, (uint8_t *) &myData, sizeof(myData));
+
+    if (result == ESP_OK) {
+        Serial.println("Sent with success");
+    } else {
+        Serial.println("Error sending the data");
+    }
+
+    // Wait for a random interval between 5 and 10 seconds
+    int waitTime = 5000 + rand() % 5001; // 5000 to 10000 milliseconds
+    delay(waitTime);
 }
