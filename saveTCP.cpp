@@ -5,6 +5,9 @@
 
 // Maximum number of peers
 #define MAX_PEERS 30
+#define MAX_DATA_SIZE 6000
+#define CHUNK_SIZE 250
+#define DATA_SIZE (CHUNK_SIZE - 6)
 
 const char* ssid = "ESP32_Network";
 const char* password = "password123";
@@ -16,8 +19,9 @@ IPAddress subnet(255, 255, 255, 0);
 typedef struct {
     uint8_t mac_addr[6];
     uint8_t* data;
-    uint16_t length; // Add length to handle varying data sizes
-    bool sent;       // Flag to indicate if the data has been sent
+    uint16_t length;
+    uint16_t received_length;
+    bool sent;
 } BroadcastMessage;
 
 // Array to store received messages
@@ -44,12 +48,12 @@ void printMacAddress(const uint8_t* mac_addr) {
 
 // Callback when data is received
 void onDataRecv(const uint8_t* mac_addr, const uint8_t* incomingData, int len) {
-    Serial.print("Received message from: ");
+    Serial.print("Received chunk from: ");
     printMacAddress(mac_addr);
     Serial.println();
 
-    if (len != 6006) {  // 6 bytes MAC address + 6000 bytes data
-        Serial.println("Invalid message length");
+    if (len < 6) {  // MAC address (6 bytes) + chunk data (0 bytes or more)
+        Serial.println("Invalid chunk length");
         return;
     }
 
@@ -71,20 +75,29 @@ void onDataRecv(const uint8_t* mac_addr, const uint8_t* incomingData, int len) {
             index = 0;
             currentIndex = 1;
         }
-        receivedMessages[index].data = (uint8_t*)malloc(6000 * sizeof(uint8_t));
+        receivedMessages[index].data = (uint8_t*)malloc(MAX_DATA_SIZE * sizeof(uint8_t));
+        receivedMessages[index].received_length = 0;
     }
 
-    // Store the MAC address and data
+    // Store the MAC address
     memcpy(receivedMessages[index].mac_addr, mac_addr, 6);
-    memcpy(receivedMessages[index].data, incomingData + 6, 6000);
-    receivedMessages[index].length = 6000;
-    receivedMessages[index].sent = false;  // Mark as new data
 
-    // Print 6 sample integers (the n-thousandth of each array)
+    // Append the incoming data chunk to the existing data buffer
+    int chunkSize = len - 6;
+    if (receivedMessages[index].received_length + chunkSize <= MAX_DATA_SIZE) {
+        memcpy(receivedMessages[index].data + receivedMessages[index].received_length, incomingData + 6, chunkSize);
+        receivedMessages[index].received_length += chunkSize;
+        Serial.print("Chunk received. Total received length: ");
+        Serial.println(receivedMessages[index].received_length);
+    } else {
+        Serial.println("Error: Received data exceeds buffer size.");
+    }
+
+    // Print 6 sample integers (the n-thousandth of each array if available)
     Serial.print("Data from ");
     printMacAddress(mac_addr);
     Serial.print(": ");
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 6 && i * 1000 < receivedMessages[index].received_length; i++) {
         Serial.print(receivedMessages[index].data[i * 1000]);
         if (i < 5) {
             Serial.print(", ");
@@ -107,9 +120,9 @@ void onRequest(AsyncWebServerRequest* request) {
     size_t totalSize = 0;
     int validIndex = -1;
     for (int i = 0; i < currentIndex; i++) {
-        if (!receivedMessages[i].sent) {
+        if (!receivedMessages[i].sent && receivedMessages[i].received_length == MAX_DATA_SIZE) {
             validIndex = i;
-            totalSize = 6 + 2 + receivedMessages[i].length;  // MAC address + length prefix + data
+            totalSize = 6 + receivedMessages[i].received_length;  // MAC address + data
             break;
         }
     }
@@ -123,10 +136,7 @@ void onRequest(AsyncWebServerRequest* request) {
     uint8_t* ptr = responseBuffer;
     memcpy(ptr, receivedMessages[validIndex].mac_addr, 6);
     ptr += 6;
-    ptr[0] = (uint8_t)((receivedMessages[validIndex].length >> 8) & 0xFF); // High byte of length
-    ptr[1] = (uint8_t)(receivedMessages[validIndex].length & 0xFF);        // Low byte of length
-    ptr += 2;
-    memcpy(ptr, receivedMessages[validIndex].data, receivedMessages[validIndex].length);
+    memcpy(ptr, receivedMessages[validIndex].data, receivedMessages[validIndex].received_length);
 
     // Create a response to send the binary data
     AsyncWebServerResponse *response = request->beginResponse_P(200, "application/octet-stream", responseBuffer, totalSize);
@@ -160,6 +170,17 @@ void setup() {
     Serial.println("ESP32 AP is running");
     Serial.print("IP Address: ");
     Serial.println(WiFi.softAPIP());
+
+    uint8_t myAddress [6];
+    WiFi.macAddress(myAddress);
+    Serial.print("Mac Address: ");
+    for(int i=0; i<6; i++){
+        Serial.print(myAddress[i], HEX);
+        if (i < 5) {
+            Serial.print(":");
+        }
+    }
+    Serial.println();
 }
 
 void loop() {

@@ -2,13 +2,16 @@
 #include <esp_now.h>
 #include <stdlib.h>
 
-// Define MAC address of the receiver (replace with the actual MAC address)
-uint8_t receiverMAC[] = {0x24, 0x6F, 0x28, 0xA1, 0xB2, 0xC3};
+#define CHUNK_SIZE 250
+#define DATA_SIZE (CHUNK_SIZE - 6) // 250 bytes total minus 6 bytes for MAC address
+
+// Broadcast MAC address
+uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 // Structure to define the message
 typedef struct struct_message {
     uint8_t mac_addr[6];
-    uint8_t data[6000];
+    uint8_t data[DATA_SIZE];
 } struct_message;
 
 // Create a struct_message to hold the data
@@ -39,6 +42,21 @@ void setup() {
     // Set device as a Wi-Fi Station
     WiFi.mode(WIFI_STA);
 
+    // Print MAC address of the transmitter
+    uint8_t mac[6];
+    WiFi.macAddress(mac);
+    Serial.print("Transmitter MAC Address: ");
+    for (int i = 0; i < 6; i++) {
+        if (mac[i] < 16) {
+            Serial.print("0");
+        }
+        Serial.print(mac[i], HEX);
+        if (i < 5) {
+            Serial.print(":");
+        }
+    }
+    Serial.println();
+
     // Initialize ESP-NOW
     if (esp_now_init() != ESP_OK) {
         Serial.println("Error initializing ESP-NOW");
@@ -49,8 +67,8 @@ void setup() {
     esp_now_register_send_cb(onDataSent);
 
     // Register peer
-    esp_now_peer_info_t peerInfo;
-    memcpy(peerInfo.peer_addr, receiverMAC, 6);
+    esp_now_peer_info_t peerInfo = {};
+    memcpy(peerInfo.peer_addr, broadcastAddress, 6);
     peerInfo.channel = 0;  
     peerInfo.encrypt = false;
 
@@ -66,18 +84,32 @@ void setup() {
 
 void loop() {
     // Generate random data
-    generateRandomData(myData.data, 6000);
+    uint8_t fullData[6000];
+    generateRandomData(fullData, 6000);
 
-    // Send message via ESP-NOW
-    esp_err_t result = esp_now_send(receiverMAC, (uint8_t *) &myData, sizeof(myData));
+    // Send the data in chunks of 250 bytes, including the MAC address
+    for (size_t i = 0; i < 6000; i += DATA_SIZE) {
+        size_t chunkSize = (i + DATA_SIZE <= 6000) ? DATA_SIZE : (6000 - i);
+        memcpy(myData.data, fullData + i, chunkSize);
+        esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &myData, 6 + chunkSize);
 
-    if (result == ESP_OK) {
-        Serial.println("Sent with success");
-    } else {
-        Serial.println("Error sending the data");
+        if (result == ESP_OK) {
+            Serial.print("Chunk ");
+            Serial.print(i / DATA_SIZE);
+            Serial.println(" sent with success");
+        } else {
+            Serial.print("Chunk ");
+            Serial.print(i / DATA_SIZE);
+            Serial.print(" failed to send, error code: ");
+            Serial.println(result);
+        }
+
+        // Increase delay between sending chunks to avoid congestion
+        delay(100);  // Increase delay to give more time for processing
     }
 
     // Wait for a random interval between 5 and 10 seconds
     int waitTime = 5000 + rand() % 5001; // 5000 to 10000 milliseconds
     delay(waitTime);
 }
+ 
