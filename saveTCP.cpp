@@ -49,7 +49,7 @@ void printMacAddress(const uint8_t* mac_addr) {
 // Callback when data is received
 void onDataRecv(const uint8_t* mac_addr, const uint8_t* incomingData, int len) {
     Serial.print("Received chunk from: ");
-    printMacAddress(mac_addr);
+    printMacAddress(mac_addr); 
     Serial.println();
 
     if (len < 6) {  // MAC address (6 bytes) + chunk data (0 bytes or more)
@@ -87,23 +87,28 @@ void onDataRecv(const uint8_t* mac_addr, const uint8_t* incomingData, int len) {
     if (receivedMessages[index].received_length + chunkSize <= MAX_DATA_SIZE) {
         memcpy(receivedMessages[index].data + receivedMessages[index].received_length, incomingData + 6, chunkSize);
         receivedMessages[index].received_length += chunkSize;
-        Serial.print("Chunk received. Total received length: ");
-        Serial.println(receivedMessages[index].received_length);
-    } else {
-        Serial.println("Error: Received data exceeds buffer size.");
-    }
+        // Serial.print("Chunk received. Total received length: ");
+        // Serial.println(receivedMessages[index].received_length);
 
-    // Print 6 sample integers (the n-thousandth of each array if available)
-    Serial.print("Data from ");
-    printMacAddress(mac_addr);
-    Serial.print(": ");
-    for (int i = 0; i < 6 && i * 1000 < receivedMessages[index].received_length; i++) {
-        Serial.print(receivedMessages[index].data[i * 1000]);
-        if (i < 5) {
-            Serial.print(", ");
+        // Check if the full broadcast has been received
+        if (receivedMessages[index].received_length == MAX_DATA_SIZE) {
+            // Print 6 sample integers (the n-thousandth of each array if available)
+            Serial.print("Data from ");
+            printMacAddress(mac_addr);
+            Serial.print(": ");
+            for (int i = 0; i < 6; i++) {
+                Serial.print(receivedMessages[index].data[i * 1000]);
+                if (i < 5) {
+                    Serial.print(", ");
+                }
+            }
+            Serial.println();
         }
+    } else {
+        Serial.println("Received data exceeds buffer size. Wiping stored data.");
+        memset(receivedMessages[index].data, 0, MAX_DATA_SIZE); // Wipe the buffer
+        receivedMessages[index].received_length = 0; // Reset received length
     }
-    Serial.println();
 }
 
 // Initialize ESP-NOW
@@ -117,6 +122,7 @@ void initESPNow() {
 
 // TCP request handler
 void onRequest(AsyncWebServerRequest* request) {
+    Serial.println("Received request");
     size_t totalSize = 0;
     int validIndex = -1;
     for (int i = 0; i < currentIndex; i++) {

@@ -91,7 +91,16 @@ void loop() {
     for (size_t i = 0; i < 6000; i += DATA_SIZE) {
         size_t chunkSize = (i + DATA_SIZE <= 6000) ? DATA_SIZE : (6000 - i);
         memcpy(myData.data, fullData + i, chunkSize);
-        esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &myData, 6 + chunkSize);
+
+        // Retry sending if ESP_ERR_ESPNOW_NO_MEM error occurs
+        esp_err_t result;
+        do {
+            result = esp_now_send(broadcastAddress, (uint8_t *) &myData, 6 + chunkSize);
+            if (result == ESP_ERR_ESPNOW_NO_MEM) {
+                Serial.println("Out of memory error, retrying...");
+                delay(100); // Small delay to allow ESP-NOW task to process
+            }
+        } while (result == ESP_ERR_ESPNOW_NO_MEM);
 
         if (result == ESP_OK) {
             Serial.print("Chunk ");
@@ -104,12 +113,26 @@ void loop() {
             Serial.println(result);
         }
 
-        // Increase delay between sending chunks to avoid congestion
-        delay(100);  // Increase delay to give more time for processing
+        // Small delay between sending chunks to avoid congestion
+        delay(50);
     }
 
-    // Wait for a random interval between 5 and 10 seconds
+    // Generate a random interval between 5 and 10 seconds
     int waitTime = 5000 + rand() % 5001; // 5000 to 10000 milliseconds
-    delay(waitTime);
+    Serial.print("Going to sleep for ");
+    Serial.print(waitTime);
+    Serial.println(" milliseconds");
+
+    // Configure the wakeup source as the timer
+    // esp_sleep_enable_timer_wakeup(waitTime * 1000); // Convert milliseconds to microseconds
+
+    // Enter light sleep mode
+    Serial.println("Entering light sleep...");
+    // esp_light_sleep_start();
+
+    // Wake up from light sleep
+    Serial.println("Woke up from light sleep");
+
+    // Wait a bit for the Serial to be ready
+    delay(100);
 }
- 
