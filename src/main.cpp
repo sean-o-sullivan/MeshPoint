@@ -1,138 +1,165 @@
-#include <WiFi.h>
+#include <painlessMesh.h>
 #include <esp_now.h>
-#include <stdlib.h>
+#include <WiFi.h>
+#include <unordered_map>
 
-#define CHUNK_SIZE 250
-#define DATA_SIZE (CHUNK_SIZE - 6) // 250 bytes total minus 6 bytes for MAC address
+#define MESH_SSID "ForceMesh"
+#define MESH_PORT 5555
+#define DATA_SIZE 5994  // 6000 - 6
+#define SCAN_TIME 10000
+#define SETUP_COMMAND 2069783108202043734ULL
 
-// Broadcast MAC address
-uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-
-// Structure to define the message
-typedef struct struct_message {
-    uint8_t mac_addr[6];
-    uint8_t data[DATA_SIZE];
-} struct_message;
-
-// Create a struct_message to hold the data
-struct_message myData;
-
-// Function to generate uint8_t's
-void generateRandomData(uint8_t* data, size_t length) {
-    for (size_t i = 0; i < length; i++) {
-        float rand_val = (float)rand() / RAND_MAX;
-        if (rand_val < 0.99) {
-            data[i] = rand() % 4; // 0 to 3
-        } else {
-            data[i] = 10 + rand() % 141; // 10 to 150
-        }
-    }
-}
-
-// Callback when data is sent
-void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-    Serial.print("Last Packet Send Status: ");
-    Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
-}
+painlessMesh mesh;
+bool scanMode = false;
+unsigned long scanEndTime = 0;
+std::unordered_map<uint32_t, unsigned long> receivedIdentifiers;
+uint8_t routerAddress[6];
+unsigned long lastScanAttempt = 0;
+unsigned long lastDataSend = 0;
 
 void setup() {
-    // Initialize Serial Monitor
     Serial.begin(115200);
-
-    // Set device as a Wi-Fi Station
-    WiFi.mode(WIFI_STA);
-
-    // Print MAC address of the transmitter
-    uint8_t mac[6];
-    WiFi.macAddress(mac);
-    Serial.print("Transmitter MAC Address: ");
-    for (int i = 0; i < 6; i++) {
-        if (mac[i] < 16) {
-            Serial.print("0");
-        }
-        Serial.print(mac[i], HEX);
-        if (i < 5) {
-            Serial.print(":");
-        }
-    }
-    Serial.println();
-
+    WiFi.mode(WIFI_AP_STA);
+    
     // Initialize ESP-NOW
     if (esp_now_init() != ESP_OK) {
         Serial.println("Error initializing ESP-NOW");
         return;
     }
+    esp_now_register_recv_cb(onDataRecv);
 
-    // Register the send callback
-    esp_now_register_send_cb(onDataSent);
-
-    // Register peer
-    esp_now_peer_info_t peerInfo = {};
-    memcpy(peerInfo.peer_addr, broadcastAddress, 6);
-    peerInfo.channel = 0;  
-    peerInfo.encrypt = false;
-
-    // Add peer
-    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
-        Serial.println("Failed to add peer");
-        return;
-    }
-
-    // Set up the MAC address of this device
-    WiFi.macAddress(myData.mac_addr);
+    // Start in scan mode
+    startScanMode();
 }
 
 void loop() {
-    // Generate random data
-    uint8_t fullData[6000];
-    generateRandomData(fullData, 6000);
+    unsigned long currentMillis = millis();
 
-    // Send the data in chunks of 250 bytes, including the MAC address
-    for (size_t i = 0; i < 6000; i += DATA_SIZE) {
-        size_t chunkSize = (i + DATA_SIZE <= 6000) ? DATA_SIZE : (6000 - i);
-        memcpy(myData.data, fullData + i, chunkSize);
-
-        // Retry sending if ESP_ERR_ESPNOW_NO_MEM error occurs
-        esp_err_t result;
-        do {
-            result = esp_now_send(broadcastAddress, (uint8_t *) &myData, 6 + chunkSize);
-            if (result == ESP_ERR_ESPNOW_NO_MEM) {
-                Serial.println("Out of memory error, retrying...");
-                delay(100); // Small delay to allow ESP-NOW task to process
-            }
-        } while (result == ESP_ERR_ESPNOW_NO_MEM);
-
-        if (result == ESP_OK) {
-            Serial.print("Chunk ");
-            Serial.print(i / DATA_SIZE);
-            Serial.println(" sent with success");
+    // Cleanup old entries
+    for (auto it = receivedIdentifiers.begin(); it != receivedIdentifiers.end(); ) {
+        if (currentMillis - it->second > SCAN_TIME) {
+            it = receivedIdentifiers.erase(it);
         } else {
-            Serial.print("Chunk ");
-            Serial.print(i / DATA_SIZE);
-            Serial.print(" failed to send, error code: ");
-            Serial.println(result);
+            ++it;
         }
-
-        // Small delay between sending chunks to avoid congestion
-        delay(50);
     }
 
-    // Generate a random interval between 5 and 10 seconds
-    int waitTime = 5000 + rand() % 5001; // 5000 to 10000 milliseconds
-    Serial.print("Going to sleep for ");
-    Serial.print(waitTime);
-    Serial.println(" milliseconds");
+    if (scanMode && currentMillis > scanEndTime) {
+        scanMode = false;
+        Serial.println("Scan mode ended.");
+        initMesh();
+    }
 
-    // Configure the wakeup source as the timer
-    // esp_sleep_enable_timer_wakeup(waitTime * 1000); // Convert milliseconds to microseconds
+    if (!scanMode) {
+        mesh.update();
 
-    // Enter light sleep mode
-    Serial.println("Entering light sleep...");
-    // esp_light_sleep_start();
+        // Generate and send random data every minute
+        if (currentMillis - lastDataSend >= 60000) {
+            sendRandomData();
+            lastDataSend = currentMillis;
+        }
 
-    // Wake up from light sleep
-    Serial.println("Woke up from light sleep");
+        // Send router address via ESP-NOW
+        if (currentMillis - lastScanAttempt >= 5000) {
+            esp_now_send(routerAddress, (uint8_t*)"ping", 4);
+            lastScanAttempt = currentMillis;
+        }
+    }
+}
 
-    // Wait a bit for the Serial to be ready
-    delay(100);
+void startScanMode() {
+    Serial.println("Starting scan mode...");
+    scanMode = true;
+    scanEndTime = millis() + SCAN_TIME;
+    WiFi.disconnect();
+    WiFi.mode(WIFI_STA);
+    WiFi.channel(1);  // You might need to scan multiple channels
+}
+
+void initMesh() {
+    String password = String(SETUP_COMMAND);
+    mesh.setDebugMsgTypes(ERROR | STARTUP);
+    mesh.init(MESH_SSID, password.c_str(), MESH_PORT, WIFI_AP_STA);
+    mesh.onReceive(&receivedCallback);
+}
+
+void onDataRecv(const uint8_t *mac_addr, const uint8_t *data, int len) {
+    if (scanMode && len == sizeof(SETUP_COMMAND)) {
+        uint64_t receivedCommand;
+        memcpy(&receivedCommand, data, sizeof(SETUP_COMMAND));
+        if (receivedCommand == SETUP_COMMAND) {
+            memcpy(routerAddress, mac_addr, 6);
+            Serial.println("Setup command received, router address saved");
+            scanMode = false;
+            initMesh();
+        }
+    }
+}
+
+void receivedCallback(uint32_t from, String &msg) {
+    int firstComma = msg.indexOf(',');
+    int secondComma = msg.indexOf(',', firstComma + 1);
+    
+    String macStr = msg.substring(0, firstComma);
+    uint32_t messageTag = (uint32_t) strtol(msg.substring(firstComma + 1, secondComma).c_str(), NULL, 10);
+    unsigned long currentMillis = millis();
+
+    // Check for duplicate message within the last 10 seconds
+    if (receivedIdentifiers.find(messageTag) != receivedIdentifiers.end() && 
+        (currentMillis - receivedIdentifiers[messageTag] < SCAN_TIME)) {
+        Serial.println("Duplicate message received within the last 10 seconds, ignoring.");
+        return;
+    }
+
+    // Update the received message time
+    receivedIdentifiers[messageTag] = currentMillis;
+
+    // Forward the message to other nodes
+    mesh.sendBroadcast(msg);
+
+    // You can process the MAC address here if needed
+    Serial.print("Received message from MAC: ");
+    Serial.println(macStr);
+}
+
+
+void sendRandomData() {
+    uint8_t data[DATA_SIZE];
+    generateRandomData(data, DATA_SIZE);
+
+    // Get this device's MAC address
+    uint8_t mac[6];
+    WiFi.macAddress(mac);
+
+    // Add random 32-bit identifier
+    uint32_t identifier = esp_random();
+
+    // Construct the message with MAC address, identifier, and data
+    String msg = "";
+    for (int i = 0; i < 6; i++) {
+        if (mac[i] < 0x10) msg += "0";
+        msg += String(mac[i], HEX);
+    }
+    msg += "," + String(identifier) + ",";
+    for (int i = 0; i < DATA_SIZE; i++) {
+        msg += String(data[i]) + ",";
+    }
+
+    // Broadcast to mesh
+    mesh.sendBroadcast(msg);
+
+    // Send to router via ESP-NOW
+    esp_now_send(routerAddress, (uint8_t*)msg.c_str(), msg.length());
+}
+
+
+void generateRandomData(uint8_t* data, size_t length) {
+    for (size_t i = 0; i < length; i++) {
+        float rand_val = (float)esp_random() / UINT32_MAX;
+        if (rand_val < 0.99) {
+            data[i] = esp_random() % 4; // 0 to 3
+        } else {
+            data[i] = 10 + esp_random() % 141; // 10 to 150
+        }
+    }
 }
