@@ -226,7 +226,7 @@ void onDataRecv(const uint8_t *mac_addr, const uint8_t *data, int len) {
                 }
             }
 
-            if (!found) { //check if duplicate
+            if (!found) { //check if duplicate using above function
                 if(numSavedAddresses<15){
                     esp_now_peer_info_t peerInfo = {};
                     memcpy(peerInfo.peer_addr, mac_addr, 6);
@@ -341,6 +341,16 @@ bool isDuplicateMessage(uint32_t messageTag) {
         }
     }
     return false;
+}
+
+bool isDuplicatedBatch(uint32_t messageTag, uint8_t batchTag) {
+    for(int i = 0; i<NO_OF_BATCH_TAGS; i++){
+        if(batchTag == batchTags[i]){
+            return true;
+        }
+    }
+    return false;
+
 }
 
 void printMacAddress(const uint8_t* mac_addr) {
